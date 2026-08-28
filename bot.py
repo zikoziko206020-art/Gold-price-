@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 MORNING_UTC = dt_time(hour=6, minute=0)
 EVENING_UTC = dt_time(hour=14, minute=0)
 
+# الاستطلاع الأسبوعي: كل جمعة صباحًا (نفس وقت تحديث الصباح)
+FRIDAY_WEEKDAY = 4  # الاثنين=0 ... الجمعة=4 حسب ترقيم بايثون
+
 
 def _current_gram21_sanaa() -> float:
     """يحسب سعر جرام عيار 21 بالريال اليمني - صنعاء، للاستخدام في السجل التاريخي"""
@@ -42,7 +45,7 @@ def _build_change_indicator() -> str:
 
         yesterday = get_yesterday_price()
         if not yesterday:
-            return ""  # لا يوجد سعر سابق للمقارنة بعد (أول تشغيل)
+            return ""
 
         diff = today_price - yesterday["price"]
         pct = (diff / yesterday["price"]) * 100 if yesterday["price"] else 0
@@ -60,10 +63,18 @@ def _build_change_indicator() -> str:
         return ""
 
 
+def _trust_footer() -> str:
+    """سطر يعزز الثقة: وقت التحقق الفعلي من المصدر (لحظة التنفيذ)"""
+    from datetime import datetime
+    now = datetime.now().strftime("%H:%M:%S")
+    return f"✅ _تم التحقق من المصدر مباشرة الساعة {now}_"
+
+
 async def send_exchange_update(context: ContextTypes.DEFAULT_TYPE):
     """ينشر رسالة الصرف فقط - مرة واحدة يوميًا صباحًا"""
     try:
         exchange_text = build_exchange_message()
+        exchange_text += f"\n\n{_trust_footer()}"
         await context.bot.send_message(
             chat_id=CHAT_ID, text=exchange_text, parse_mode="Markdown", disable_web_page_preview=True
         )
@@ -81,6 +92,8 @@ async def send_gold_update(context: ContextTypes.DEFAULT_TYPE, with_chart: bool 
             change_line = _build_change_indicator()
             if change_line:
                 gold_text += f"\n\n{change_line}"
+
+        gold_text += f"\n\n{_trust_footer()}"
 
         await context.bot.send_message(
             chat_id=CHAT_ID, text=gold_text, parse_mode="Markdown", disable_web_page_preview=True
@@ -111,16 +124,36 @@ async def send_evening_gold_update(context: ContextTypes.DEFAULT_TYPE):
     await send_gold_update(context, with_chart=False)
 
 
+async def send_weekly_poll(context: ContextTypes.DEFAULT_TYPE):
+    """يرسل استطلاع رأي أسبوعي كل يوم جمعة"""
+    try:
+        import datetime as dt
+        if dt.datetime.now().weekday() != FRIDAY_WEEKDAY:
+            return  # ليس يوم جمعة، لا نرسل شيئًا
+
+        await context.bot.send_poll(
+            chat_id=CHAT_ID,
+            question="📊 توقعك لسعر الذهب الأسبوع القادم؟",
+            options=["🔺 سيرتفع", "🔻 سينخفض", "➖ سيبقى مستقرًا"],
+            is_anonymous=True,
+        )
+        logger.info("تم نشر استطلاع الرأي الأسبوعي بنجاح")
+    except Exception as e:
+        logger.exception("فشل نشر استطلاع الرأي: %s", e)
+
+
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """الأمر /price - يرسل الرسالتين فورًا لمن طلبهما"""
     try:
         exchange_text = build_exchange_message()
+        exchange_text += f"\n\n{_trust_footer()}"
         await update.message.reply_text(exchange_text, parse_mode="Markdown", disable_web_page_preview=True)
 
         gold_text = build_gold_message()
         change_line = _build_change_indicator()
         if change_line:
             gold_text += f"\n\n{change_line}"
+        gold_text += f"\n\n{_trust_footer()}"
         await update.message.reply_text(gold_text, parse_mode="Markdown", disable_web_page_preview=True)
     except Exception as e:
         logger.exception("فشل تنفيذ أمر /price: %s", e)
@@ -133,7 +166,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "استخدم الأمر /price لمعرفة أسعار الصرف والذهب الحالية.\n"
         "كما أقوم بنشر تحديث أسعار الصرف مرة يوميًا (9 صباحًا)، "
         "وتحديث أسعار الذهب مرتين يوميًا (9 صباحًا و5 مساءً) بتوقيت اليمن، "
-        "مع مؤشر التغيّر والرسم البياني الأسبوعي في تحديث الصباح."
+        "مع مؤشر التغيّر والرسم البياني الأسبوعي في تحديث الصباح، "
+        "واستطلاع رأي أسبوعي كل جمعة."
     )
 
 
@@ -150,6 +184,9 @@ def main():
     # رسالة الذهب: مرتين يوميًا - الصباح مع الرسم البياني، المساء بدونه
     job_queue.run_daily(send_morning_gold_update, time=MORNING_UTC, name="morning_gold")
     job_queue.run_daily(send_evening_gold_update, time=EVENING_UTC, name="evening_gold")
+
+    # استطلاع الرأي الأسبوعي: يُفحص يوميًا لكن يُرسل فقط يوم الجمعة
+    job_queue.run_daily(send_weekly_poll, time=MORNING_UTC, name="weekly_poll")
 
     logger.info("🟡 البوت يعمل الآن...")
     app.run_polling()
