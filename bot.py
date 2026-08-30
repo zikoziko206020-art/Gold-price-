@@ -7,7 +7,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 from config import BOT_TOKEN, CHAT_ID
-from message_builder import build_exchange_message, build_gold_message
+from message_builder import build_exchange_message, build_gold_message, build_silver_message
 from gold_price import get_gold_price_usd_per_ounce
 from exchange_rate import get_usd_yer_sanaa
 from config import TROY_OUNCE_IN_GRAMS
@@ -29,7 +29,6 @@ POLL_WEEKDAY = 5  # الاثنين=0 ... السبت=5
 
 
 def _current_gram21_sanaa() -> float:
-    """يحسب سعر جرام عيار 21 بالريال اليمني - صنعاء، للاستخدام في السجل التاريخي"""
     ounce_usd = get_gold_price_usd_per_ounce()
     gram24_usd = ounce_usd / TROY_OUNCE_IN_GRAMS
     gram21_usd = gram24_usd * 21 / 24
@@ -38,7 +37,6 @@ def _current_gram21_sanaa() -> float:
 
 
 def _build_change_indicator() -> str:
-    """يبني سطر مؤشر التغيّر (↑/↓) بمقارنة اليوم بآخر سعر مسجّل"""
     try:
         today_price = _current_gram21_sanaa()
         save_today_price(today_price)
@@ -64,14 +62,12 @@ def _build_change_indicator() -> str:
 
 
 def _trust_footer() -> str:
-    """سطر يعزز الثقة: وقت التحقق الفعلي من المصدر (لحظة التنفيذ)"""
     from datetime import datetime
     now = datetime.now().strftime("%H:%M:%S")
     return f"✅ _تم التحقق من المصدر مباشرة الساعة {now}_"
 
 
 async def send_exchange_update(context: ContextTypes.DEFAULT_TYPE):
-    """ينشر رسالة الصرف فقط - مرة واحدة يوميًا صباحًا"""
     try:
         exchange_text = build_exchange_message()
         exchange_text += f"\n\n{_trust_footer()}"
@@ -83,8 +79,20 @@ async def send_exchange_update(context: ContextTypes.DEFAULT_TYPE):
         logger.exception("فشل نشر رسالة الصرف: %s", e)
 
 
+async def send_silver_update(context: ContextTypes.DEFAULT_TYPE):
+    """ينشر رسالة الفضة فقط - مرة واحدة يوميًا صباحًا"""
+    try:
+        silver_text = build_silver_message()
+        silver_text += f"\n\n{_trust_footer()}"
+        await context.bot.send_message(
+            chat_id=CHAT_ID, text=silver_text, parse_mode="Markdown", disable_web_page_preview=True
+        )
+        logger.info("تم نشر رسالة الفضة بنجاح")
+    except Exception as e:
+        logger.exception("فشل نشر رسالة الفضة: %s", e)
+
+
 async def send_gold_update(context: ContextTypes.DEFAULT_TYPE, with_chart: bool = False):
-    """ينشر رسالة الذهب، مع إمكانية إرفاق مؤشر التغيّر والرسم البياني الأسبوعي"""
     try:
         gold_text = build_gold_message()
 
@@ -115,21 +123,18 @@ async def send_gold_update(context: ContextTypes.DEFAULT_TYPE, with_chart: bool 
 
 
 async def send_morning_gold_update(context: ContextTypes.DEFAULT_TYPE):
-    """نسخة الصباح: تشمل مؤشر التغيّر والرسم البياني"""
     await send_gold_update(context, with_chart=True)
 
 
 async def send_evening_gold_update(context: ContextTypes.DEFAULT_TYPE):
-    """نسخة المساء: رسالة الذهب فقط بدون تكرار الرسم البياني"""
     await send_gold_update(context, with_chart=False)
 
 
 async def send_weekly_poll(context: ContextTypes.DEFAULT_TYPE):
-    """يرسل استطلاع رأي أسبوعي كل يوم سبت"""
     try:
         import datetime as dt
         if dt.datetime.now().weekday() != POLL_WEEKDAY:
-            return  # ليس يوم السبت، لا نرسل شيئًا
+            return
 
         await context.bot.send_poll(
             chat_id=CHAT_ID,
@@ -143,7 +148,6 @@ async def send_weekly_poll(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """الأمر /price - يرسل الرسالتين فورًا لمن طلبهما"""
     try:
         exchange_text = build_exchange_message()
         exchange_text += f"\n\n{_trust_footer()}"
@@ -155,6 +159,10 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             gold_text += f"\n\n{change_line}"
         gold_text += f"\n\n{_trust_footer()}"
         await update.message.reply_text(gold_text, parse_mode="Markdown", disable_web_page_preview=True)
+
+        silver_text = build_silver_message()
+        silver_text += f"\n\n{_trust_footer()}"
+        await update.message.reply_text(silver_text, parse_mode="Markdown", disable_web_page_preview=True)
     except Exception as e:
         logger.exception("فشل تنفيذ أمر /price: %s", e)
         await update.message.reply_text("⚠️ حدث خطأ أثناء جلب الأسعار، حاول مرة أخرى بعد قليل.")
@@ -163,11 +171,8 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✨ أهلاً بك! 👋\n\n"
-        "استخدم الأمر /price لمعرفة أسعار الصرف والذهب الحالية.\n"
-        "كما أقوم بنشر تحديث أسعار الصرف مرة يوميًا (9 صباحًا)، "
-        "وتحديث أسعار الذهب مرتين يوميًا (9 صباحًا و5 مساءً) بتوقيت اليمن، "
-        "مع مؤشر التغيّر والرسم البياني الأسبوعي في تحديث الصباح، "
-        "واستطلاع رأي أسبوعي كل سبت."
+        "استخدم الأمر /price لمعرفة أسعار الصرف والذهب والفضة الحالية.\n\n"
+        "كما أقوم بنشر تحديثات يومية وأسبوعية تلقائيًا في القناة."
     )
 
 
@@ -178,14 +183,10 @@ def main():
 
     job_queue = app.job_queue
 
-    # رسالة الصرف: مرة واحدة فقط صباحًا
     job_queue.run_daily(send_exchange_update, time=MORNING_UTC, name="morning_exchange")
-
-    # رسالة الذهب: مرتين يوميًا - الصباح مع الرسم البياني، المساء بدونه
+    job_queue.run_daily(send_silver_update, time=MORNING_UTC, name="morning_silver")
     job_queue.run_daily(send_morning_gold_update, time=MORNING_UTC, name="morning_gold")
     job_queue.run_daily(send_evening_gold_update, time=EVENING_UTC, name="evening_gold")
-
-    # استطلاع الرأي الأسبوعي: يُفحص يوميًا لكن يُرسل فقط يوم السبت
     job_queue.run_daily(send_weekly_poll, time=MORNING_UTC, name="weekly_poll")
 
     logger.info("🟡 البوت يعمل الآن...")
