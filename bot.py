@@ -1,4 +1,4 @@
-"""بوت تيليجرام لأسعار الذهب والفضة مقابل الدولار والريال اليمني"""
+"""بوت تيليجرام لأسعار الذهب مقابل الدولار والريال اليمني"""
 import logging
 import os
 from datetime import time as dt_time
@@ -7,7 +7,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 from config import BOT_TOKEN, CHAT_ID
-from card_generator import generate_daily_card
+from message_builder import build_exchange_message, build_gold_message, build_silver_message
 from gold_price import get_gold_price_usd_per_ounce
 from exchange_rate import get_usd_yer_sanaa
 from config import TROY_OUNCE_IN_GRAMS
@@ -33,39 +33,76 @@ def _current_gram21_sanaa() -> float:
     return gram21_usd * usd_sanaa
 
 
-def _build_change_caption() -> str:
-    """يبني نص تعليق (caption) بسيط للصورة يشمل مؤشر التغيّر"""
+def _build_change_indicator() -> str:
     try:
         today_price = _current_gram21_sanaa()
         save_today_price(today_price)
 
         yesterday = get_yesterday_price()
         if not yesterday:
-            return "📊 تحديث أسعار الذهب والفضة اليوم"
+            return ""
 
         diff = today_price - yesterday["price"]
         pct = (diff / yesterday["price"]) * 100 if yesterday["price"] else 0
 
         if diff > 0:
-            return f"🔺 ارتفاع عيار 21 بمقدار {abs(diff):,.0f} ريال ({abs(pct):.2f}%)"
+            arrow, word = "🔺", "ارتفاع"
         elif diff < 0:
-            return f"🔻 انخفاض عيار 21 بمقدار {abs(diff):,.0f} ريال ({abs(pct):.2f}%)"
+            arrow, word = "🔻", "انخفاض"
         else:
-            return "➖ لا تغيير في سعر عيار 21 عن آخر تحديث"
+            return "➖ *لا تغيير* عن آخر تحديث"
+
+        return f"{arrow} *{word}* بمقدار *{abs(diff):,.0f}* ريال ({abs(pct):.2f}%) عن آخر تحديث"
     except Exception as e:
         logger.exception("فشل حساب مؤشر التغيّر: %s", e)
-        return "📊 تحديث أسعار الذهب والفضة اليوم"
+        return ""
 
 
-async def send_daily_card(context: ContextTypes.DEFAULT_TYPE, with_chart: bool = False):
-    """يرسل البطاقة الشاملة (صرف + ذهب + فضة) كصورة واحدة بدل النصوص المنفصلة"""
+def _trust_footer() -> str:
+    from datetime import datetime
+    now = datetime.now().strftime("%H:%M:%S")
+    return f"✅ _تم التحقق من المصدر مباشرة الساعة {now}_"
+
+
+async def send_exchange_update(context: ContextTypes.DEFAULT_TYPE):
     try:
-        card_path = generate_daily_card()
-        caption = _build_change_caption()
+        exchange_text = build_exchange_message()
+        exchange_text += f"\n\n{_trust_footer()}"
+        await context.bot.send_message(
+            chat_id=CHAT_ID, text=exchange_text, parse_mode="Markdown", disable_web_page_preview=True
+        )
+        logger.info("تم نشر رسالة الصرف بنجاح")
+    except Exception as e:
+        logger.exception("فشل نشر رسالة الصرف: %s", e)
 
-        with open(card_path, "rb") as photo:
-            await context.bot.send_photo(chat_id=CHAT_ID, photo=photo, caption=caption)
-        logger.info("تم نشر البطاقة اليومية بنجاح")
+
+async def send_silver_update(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        silver_text = build_silver_message()
+        silver_text += f"\n\n{_trust_footer()}"
+        await context.bot.send_message(
+            chat_id=CHAT_ID, text=silver_text, parse_mode="Markdown", disable_web_page_preview=True
+        )
+        logger.info("تم نشر رسالة الفضة بنجاح")
+    except Exception as e:
+        logger.exception("فشل نشر رسالة الفضة: %s", e)
+
+
+async def send_gold_update(context: ContextTypes.DEFAULT_TYPE, with_chart: bool = False):
+    try:
+        gold_text = build_gold_message()
+
+        if with_chart:
+            change_line = _build_change_indicator()
+            if change_line:
+                gold_text += f"\n\n{change_line}"
+
+        gold_text += f"\n\n{_trust_footer()}"
+
+        await context.bot.send_message(
+            chat_id=CHAT_ID, text=gold_text, parse_mode="Markdown", disable_web_page_preview=True
+        )
+        logger.info("تم نشر رسالة الذهب بنجاح")
 
         if with_chart:
             chart_path = generate_weekly_chart()
@@ -78,15 +115,15 @@ async def send_daily_card(context: ContextTypes.DEFAULT_TYPE, with_chart: bool =
                     )
                 logger.info("تم نشر الرسم البياني الأسبوعي بنجاح")
     except Exception as e:
-        logger.exception("فشل نشر البطاقة اليومية: %s", e)
+        logger.exception("فشل نشر رسالة الذهب: %s", e)
 
 
-async def send_morning_update(context: ContextTypes.DEFAULT_TYPE):
-    await send_daily_card(context, with_chart=True)
+async def send_morning_gold_update(context: ContextTypes.DEFAULT_TYPE):
+    await send_gold_update(context, with_chart=True)
 
 
-async def send_evening_update(context: ContextTypes.DEFAULT_TYPE):
-    await send_daily_card(context, with_chart=False)
+async def send_evening_gold_update(context: ContextTypes.DEFAULT_TYPE):
+    await send_gold_update(context, with_chart=False)
 
 
 async def send_weekly_poll(context: ContextTypes.DEFAULT_TYPE):
@@ -107,12 +144,21 @@ async def send_weekly_poll(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """الأمر /price - يرسل البطاقة فورًا لمن طلبها"""
     try:
-        card_path = generate_daily_card()
-        caption = _build_change_caption()
-        with open(card_path, "rb") as photo:
-            await update.message.reply_photo(photo=photo, caption=caption)
+        exchange_text = build_exchange_message()
+        exchange_text += f"\n\n{_trust_footer()}"
+        await update.message.reply_text(exchange_text, parse_mode="Markdown", disable_web_page_preview=True)
+
+        gold_text = build_gold_message()
+        change_line = _build_change_indicator()
+        if change_line:
+            gold_text += f"\n\n{change_line}"
+        gold_text += f"\n\n{_trust_footer()}"
+        await update.message.reply_text(gold_text, parse_mode="Markdown", disable_web_page_preview=True)
+
+        silver_text = build_silver_message()
+        silver_text += f"\n\n{_trust_footer()}"
+        await update.message.reply_text(silver_text, parse_mode="Markdown", disable_web_page_preview=True)
     except Exception as e:
         logger.exception("فشل تنفيذ أمر /price: %s", e)
         await update.message.reply_text("⚠️ حدث خطأ أثناء جلب الأسعار، حاول مرة أخرى بعد قليل.")
@@ -133,8 +179,10 @@ def main():
 
     job_queue = app.job_queue
 
-    job_queue.run_daily(send_morning_update, time=MORNING_UTC, name="morning_update")
-    job_queue.run_daily(send_evening_update, time=EVENING_UTC, name="evening_update")
+    job_queue.run_daily(send_exchange_update, time=MORNING_UTC, name="morning_exchange")
+    job_queue.run_daily(send_silver_update, time=MORNING_UTC, name="morning_silver")
+    job_queue.run_daily(send_morning_gold_update, time=MORNING_UTC, name="morning_gold")
+    job_queue.run_daily(send_evening_gold_update, time=EVENING_UTC, name="evening_gold")
     job_queue.run_daily(send_weekly_poll, time=MORNING_UTC, name="weekly_poll")
 
     logger.info("🟡 البوت يعمل الآن...")
