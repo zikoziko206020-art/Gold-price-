@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 MORNING_UTC = dt_time(hour=6, minute=0)
 EVENING_UTC = dt_time(hour=14, minute=0)
 
-# الاستطلاع الأسبوعي: كل جمعة صباحًا (نفس وقت تحديث الصباح)
-FRIDAY_WEEKDAY = 4  # الاثنين=0 ... الجمعة=4 حسب ترقيم بايثون
+# الاستطلاع الأسبوعي: يوم السبت (بداية أسبوع التداول بعد عطلة الجمعة)
+POLL_WEEKDAY = 5  # الاثنين=0 ... السبت=5
 
 
 def _current_gram21_sanaa() -> float:
@@ -125,15 +125,15 @@ async def send_evening_gold_update(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_weekly_poll(context: ContextTypes.DEFAULT_TYPE):
-    """يرسل استطلاع رأي أسبوعي كل يوم جمعة"""
+    """يرسل استطلاع رأي أسبوعي كل يوم سبت"""
     try:
         import datetime as dt
-        if dt.datetime.now().weekday() != FRIDAY_WEEKDAY:
-            return  # ليس يوم جمعة، لا نرسل شيئًا
+        if dt.datetime.now().weekday() != POLL_WEEKDAY:
+            return  # ليس يوم السبت، لا نرسل شيئًا
 
         await context.bot.send_poll(
             chat_id=CHAT_ID,
-            question="📊 توقعك لسعر الذهب الأسبوع القادم؟",
+            question="📊 توقعك لسعر الذهب هذا الأسبوع؟",
             options=["🔺 سيرتفع", "🔻 سينخفض", "➖ سيبقى مستقرًا"],
             is_anonymous=True,
         )
@@ -167,7 +167,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "كما أقوم بنشر تحديث أسعار الصرف مرة يوميًا (9 صباحًا)، "
         "وتحديث أسعار الذهب مرتين يوميًا (9 صباحًا و5 مساءً) بتوقيت اليمن، "
         "مع مؤشر التغيّر والرسم البياني الأسبوعي في تحديث الصباح، "
-        "واستطلاع رأي أسبوعي كل جمعة."
+        "واستطلاع رأي أسبوعي كل سبت."
     )
 
 
@@ -185,7 +185,7 @@ def main():
     job_queue.run_daily(send_morning_gold_update, time=MORNING_UTC, name="morning_gold")
     job_queue.run_daily(send_evening_gold_update, time=EVENING_UTC, name="evening_gold")
 
-    # استطلاع الرأي الأسبوعي: يُفحص يوميًا لكن يُرسل فقط يوم الجمعة
+    # استطلاع الرأي الأسبوعي: يُفحص يوميًا لكن يُرسل فقط يوم السبت
     job_queue.run_daily(send_weekly_poll, time=MORNING_UTC, name="weekly_poll")
 
     logger.info("🟡 البوت يعمل الآن...")
