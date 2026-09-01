@@ -9,10 +9,27 @@ DB_PATH = "/data/prices.db"
 
 KARATS = ["24", "22", "21", "18"]
 
+EXPECTED_COLUMNS = {"date"}
+for k in KARATS:
+    EXPECTED_COLUMNS.add(f"gram{k}_sanaa")
+    EXPECTED_COLUMNS.add(f"gram{k}_aden")
+
 
 def _get_connection():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
+
+    # تحقق إن كان الجدول موجودًا بهيكل قديم مختلف، وإن كان كذلك احذفه لإعادة إنشائه بالهيكل الصحيح
+    existing = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='price_history'"
+    ).fetchone()
+
+    if existing:
+        current_columns = {row[1] for row in conn.execute("PRAGMA table_info(price_history)")}
+        if current_columns != EXPECTED_COLUMNS:
+            conn.execute("DROP TABLE price_history")
+            conn.commit()
+
     columns = ", ".join([f"gram{k}_sanaa REAL, gram{k}_aden REAL" for k in KARATS])
     conn.execute(f"""
         CREATE TABLE IF NOT EXISTS price_history (
@@ -25,10 +42,6 @@ def _get_connection():
 
 
 def save_today_prices(karats_yer_sanaa: dict, karats_yer_aden: dict):
-    """
-    يحفظ أسعار كل الأعيرة لليوم الحالي (يستبدل القيم إن كانت موجودة أصلاً لنفس اليوم)
-    karats_yer_sanaa / karats_yer_aden: {"24": value, "22": value, "21": value, "18": value}
-    """
     today = datetime.now().strftime("%Y-%m-%d")
     conn = _get_connection()
 
@@ -51,10 +64,6 @@ def save_today_prices(karats_yer_sanaa: dict, karats_yer_aden: dict):
 
 
 def get_yesterday_prices():
-    """
-    يرجع أسعار آخر يوم مسجّل قبل اليوم، أو None إن لم يوجد
-    الشكل: {"date": ..., "sanaa": {"24": .., "22": .., ...}, "aden": {...}}
-    """
     today = datetime.now().strftime("%Y-%m-%d")
     conn = _get_connection()
     row = conn.execute(
@@ -74,7 +83,6 @@ def get_yesterday_prices():
 
 
 def get_last_n_days(n: int = 7):
-    """يرجع قائمة [(date, gram21_sanaa), ...] لآخر n يوم - للرسم البياني (عيار 21 صنعاء فقط)"""
     cutoff = (datetime.now() - timedelta(days=n)).strftime("%Y-%m-%d")
     conn = _get_connection()
     rows = conn.execute(
