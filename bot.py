@@ -8,10 +8,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 from config import BOT_TOKEN, CHAT_ID
 from message_builder import build_exchange_message, build_gold_message
-from gold_price import get_gold_price_usd_per_ounce
-from exchange_rate import get_usd_yer_sanaa
-from config import TROY_OUNCE_IN_GRAMS
-from price_history import save_today_price, get_yesterday_price
 from chart_generator import generate_weekly_chart
 
 logging.basicConfig(
@@ -23,40 +19,6 @@ logger = logging.getLogger(__name__)
 MORNING_UTC = dt_time(hour=6, minute=0)
 EVENING_UTC = dt_time(hour=14, minute=0)
 POLL_WEEKDAY = 5  # السبت
-
-
-def _current_gram21_sanaa() -> float:
-    ounce_usd = get_gold_price_usd_per_ounce()
-    gram24_usd = ounce_usd / TROY_OUNCE_IN_GRAMS
-    gram21_usd = gram24_usd * 21 / 24
-    usd_sanaa = get_usd_yer_sanaa()["sell"]
-    return gram21_usd * usd_sanaa
-
-
-def _build_change_indicator() -> str:
-    """يحسب مؤشر التغيّر - يُستدعى في كل مرة تُرسل فيها رسالة الذهب (صباحًا ومساءً)"""
-    try:
-        today_price = _current_gram21_sanaa()
-        save_today_price(today_price)
-
-        yesterday = get_yesterday_price()
-        if not yesterday:
-            return ""
-
-        diff = today_price - yesterday["price"]
-        pct = (diff / yesterday["price"]) * 100 if yesterday["price"] else 0
-
-        if diff > 0:
-            arrow, word = "🔺", "ارتفاع"
-        elif diff < 0:
-            arrow, word = "🔻", "انخفاض"
-        else:
-            return "➖ *لا تغيير* عن آخر تحديث"
-
-        return f"{arrow} *{word}* بمقدار *{abs(diff):,.0f}* ريال ({abs(pct):.2f}%) عن آخر تحديث"
-    except Exception as e:
-        logger.exception("فشل حساب مؤشر التغيّر: %s", e)
-        return ""
 
 
 async def send_exchange_update(context: ContextTypes.DEFAULT_TYPE):
@@ -72,14 +34,9 @@ async def send_exchange_update(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_gold_update(context: ContextTypes.DEFAULT_TYPE):
-    """رسالة الذهب مع مؤشر التغيّر - مرتين يوميًا صباحًا ومساءً"""
+    """رسالة الذهب مع مؤشر التغيّر لكل عيار - مرتين يوميًا صباحًا ومساءً"""
     try:
         gold_text = build_gold_message()
-
-        change_line = _build_change_indicator()
-        if change_line:
-            gold_text += f"\n\n{change_line}"
-
         await context.bot.send_message(
             chat_id=CHAT_ID, text=gold_text, parse_mode="Markdown", disable_web_page_preview=True
         )
@@ -122,9 +79,6 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(exchange_text, parse_mode="Markdown", disable_web_page_preview=True)
 
         gold_text = build_gold_message()
-        change_line = _build_change_indicator()
-        if change_line:
-            gold_text += f"\n\n{change_line}"
         await update.message.reply_text(gold_text, parse_mode="Markdown", disable_web_page_preview=True)
     except Exception as e:
         logger.exception("فشل تنفيذ أمر /price: %s", e)
@@ -146,14 +100,9 @@ def main():
 
     job_queue = app.job_queue
 
-    # الصرف والفضة: مرة واحدة صباحًا
     job_queue.run_daily(send_exchange_update, time=MORNING_UTC, name="morning_exchange")
-
-    # الذهب: مرتين يوميًا صباحًا ومساءً، مع مؤشر التغيّر في كليهما
     job_queue.run_daily(send_gold_update, time=MORNING_UTC, name="morning_gold")
     job_queue.run_daily(send_gold_update, time=EVENING_UTC, name="evening_gold")
-
-    # الرسم البياني + الاستطلاع: مساء السبت فقط
     job_queue.run_daily(send_weekend_chart_and_poll, time=EVENING_UTC, name="weekend_chart_poll")
 
     logger.info("🟡 البوت يعمل الآن...")
