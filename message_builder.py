@@ -9,6 +9,7 @@ from exchange_rate import (
     get_sar_yer_aden,
 )
 from config import TROY_OUNCE_IN_GRAMS
+from price_history import save_today_prices, get_yesterday_prices
 
 DIVIDER = "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
 
@@ -23,6 +24,24 @@ def _row(label: str, value: str, emoji: str = "▫️") -> str:
 
 def _buy_sell_row(label: str, data: dict, emoji: str = "▫️") -> str:
     return f"{emoji} {label}  ┃  شراء: *{_fmt(data['buy'])}*  |  بيع: *{_fmt(data['sell'])}* ريال"
+
+
+def _change_badge(today_val: float, yesterday_val) -> str:
+    """يبني رمزًا صغيرًا أنيقًا للتغيّر (🔺+320 / 🔻-150 / بدون شيء إن لم يوجد سعر أمس)"""
+    if yesterday_val is None:
+        return ""
+    diff = today_val - yesterday_val
+    if diff > 0:
+        return f"  🔺+{diff:,.0f}"
+    elif diff < 0:
+        return f"  🔻{diff:,.0f}"
+    else:
+        return "  ➖"
+
+
+def _row_with_change(label: str, value: float, today_val: float, yesterday_val, emoji: str = "▫️") -> str:
+    badge = _change_badge(today_val, yesterday_val)
+    return f"{emoji} {label}  ┃  *{_fmt(value)} ريال*{badge}"
 
 
 def _now_strings():
@@ -86,6 +105,13 @@ def build_gold_message() -> str:
     karats_yer_sanaa = {k: v * usd_sanaa for k, v in karats_usd.items()}
     karats_yer_aden = {k: v * usd_aden for k, v in karats_usd.items()}
 
+    # حفظ أسعار اليوم ومقارنتها بالأمس لكل عيار
+    yesterday = get_yesterday_prices()
+    save_today_prices(karats_yer_sanaa, karats_yer_aden)
+
+    yesterday_sanaa = yesterday["sanaa"] if yesterday else {}
+    yesterday_aden = yesterday["aden"] if yesterday else {}
+
     now_date, now_time = _now_strings()
 
     lines = []
@@ -105,11 +131,11 @@ def build_gold_message() -> str:
     lines.append(DIVIDER)
     lines.append("🇾🇪 *سعر جرام الذهب بالريال اليمني — صنعاء*")
     for k, v in karats_yer_sanaa.items():
-        lines.append(_row(f"عيار {k}", f"{_fmt(v)} ريال", "🔹"))
+        lines.append(_row_with_change(f"عيار {k}", v, v, yesterday_sanaa.get(k), "🔹"))
     lines.append("")
     lines.append("🇾🇪 *سعر جرام الذهب بالريال اليمني — عدن*")
     for k, v in karats_yer_aden.items():
-        lines.append(_row(f"عيار {k}", f"{_fmt(v)} ريال", "🔸"))
+        lines.append(_row_with_change(f"عيار {k}", v, v, yesterday_aden.get(k), "🔸"))
 
     try:
         local = get_local_gold_buy_sell()
