@@ -32,9 +32,9 @@ def _change_badge(today_val: float, yesterday_val) -> str:
         return ""
     diff = today_val - yesterday_val
     if diff > 0:
-        return f"  🔺+{diff:,.0f}"
+        return f"  ⬆️+{diff:,.0f}"
     elif diff < 0:
-        return f"  🔻{diff:,.0f}"
+        return f"  ⬇️{diff:,.0f}"
     else:
         return "  ➖"
 
